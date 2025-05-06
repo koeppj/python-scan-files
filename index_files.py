@@ -42,12 +42,17 @@ def worker_task(task_queue, result_queue, root_path, filename_regex):
             dir_path = task_queue.get(timeout=5)
             if dir_path is None:
                 break
+            if dir_path is None:
+                break
             files, subdirs = scan_dir(dir_path, root_path, filename_regex)
             result_queue.put(('files', files))
             for sub in subdirs:
                 task_queue.put(sub)
         except Empty:
             continue
+        finally:
+            task_queue.task_done()
+
 
 async def prepare_table(conn, drop_existing):
     if drop_existing:
@@ -78,7 +83,6 @@ async def async_writer(result_queue, db_config, drop_existing):
     while True:
         try:
             msg_type, data = await loop.run_in_executor(None, result_queue.get, True, 10)
-            print(f"[INFO] Received {len(data)} files...")
             if msg_type == 'done':
                 break
             elif msg_type == 'files':
@@ -104,7 +108,7 @@ def writer_process(result_queue, db_config, drop_existing):
 
 def traverse_parallel(root_dir, db_config, drop_existing=False, filename_regex=None, num_workers=mp.cpu_count()):
     ctx = mp.get_context('spawn')
-    task_queue = ctx.Queue(maxsize=1000)
+    task_queue = ctx.JoinableQueue()
     result_queue = ctx.Queue(maxsize=1000)
 
     task_queue.put(root_dir)
@@ -118,6 +122,8 @@ def traverse_parallel(root_dir, db_config, drop_existing=False, filename_regex=N
     ]
     for w in workers:
         w.start()
+
+    task_queue.join()  # Wait until all tasks are done
 
     for _ in workers:
         task_queue.put(None)
