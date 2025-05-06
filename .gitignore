@@ -68,3 +68,6 @@ var/
 
 # Test and debug
 *.mo
+
+# config file
+config.json

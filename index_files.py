@@ -10,6 +10,10 @@ INSERT_BATCH_SIZE = 1000
 TABLE_NAME = "file_index"
 
 def scan_dir(dir_path, root_path, filename_regex):
+    """Scan a directory and return a list of files and subdirectories.
+    If filename_regex is provided, it will extract the matching portion of the filename.
+    """
+    print(f"[INFO] Scanning directory: {dir_path}")
     results = []
     subdirs = []
     try:
@@ -25,7 +29,7 @@ def scan_dir(dir_path, root_path, filename_regex):
                             extracted = match.group(0)
                         else:
                             continue  # skip files that do not match
-                    results.append((extracted, full_filename, full_path, root_path))
+                    results.append((extracted, full_path, root_path))
                 elif entry.is_dir(follow_symlinks=False):
                     subdirs.append(full_path)
     except (PermissionError, FileNotFoundError):
@@ -50,12 +54,12 @@ async def prepare_table(conn, drop_existing):
         await conn.execute(f"DROP TABLE IF EXISTS {TABLE_NAME}")
     await conn.execute(f"""
         CREATE TABLE IF NOT EXISTS {TABLE_NAME} (
-            extracted_name TEXT PRIMARY KEY,
-            filename TEXT NOT NULL,
-            full_path TEXT NOT NULL,
-            root_path TEXT NOT NULL
-        )
-    """)
+        filename TEXT NOT NULL,
+        root_path TEXT NOT NULL,
+        full_path TEXT NOT NULL,
+        PRIMARY KEY (filename, root_path)
+    );""")
+    await conn.execute(f"CREATE INDEX IF NOT EXISTS idx_filename ON {TABLE_NAME}(filename);")
 
 async def async_writer(result_queue, db_config, drop_existing):
     file_counter = 0
@@ -63,9 +67,9 @@ async def async_writer(result_queue, db_config, drop_existing):
     await prepare_table(conn, drop_existing)
 
     insert_query = f"""
-        INSERT INTO {TABLE_NAME} (extracted_name, filename, full_path, root_path)
-        VALUES ($1, $2, $3, $4)
-        ON CONFLICT (extracted_name) DO NOTHING
+        INSERT INTO {TABLE_NAME} (filename, full_path, root_path)
+        VALUES ($1, $2, $3)
+        ON CONFLICT (filename, root_path) DO NOTHING
     """
 
     buffer = []
@@ -74,6 +78,7 @@ async def async_writer(result_queue, db_config, drop_existing):
     while True:
         try:
             msg_type, data = await loop.run_in_executor(None, result_queue.get, True, 10)
+            print(f"[INFO] Received {len(data)} files...")
             if msg_type == 'done':
                 break
             elif msg_type == 'files':
