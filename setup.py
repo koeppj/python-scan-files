@@ -15,5 +15,5 @@ setup(
             'pg-file-indexer=index_files:main',
         ],
     },
-    python_requires='>=3.8',
+    python_requires='>=3.7',
 )
