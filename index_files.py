@@ -13,7 +13,6 @@ def scan_dir(dir_path, root_path, filename_regex):
     """Scan a directory and return a list of files and subdirectories.
     If filename_regex is provided, it will extract the matching portion of the filename.
     """
-    print(f"[INFO] Scanning directory: {dir_path}")
     results = []
     subdirs = []
     try:
@@ -37,6 +36,7 @@ def scan_dir(dir_path, root_path, filename_regex):
     return results, subdirs
 
 def worker_task(task_queue, result_queue, root_path, filename_regex):
+    """Worker function to process directories from the task queue."""
     while True:
         try:
             dir_path = task_queue.get(timeout=5)
@@ -55,6 +55,7 @@ def worker_task(task_queue, result_queue, root_path, filename_regex):
 
 
 async def prepare_table(conn, drop_existing):
+    """Prepare the database table for indexing files."""
     if drop_existing:
         await conn.execute(f"DROP TABLE IF EXISTS {TABLE_NAME}")
     await conn.execute(f"""
@@ -66,7 +67,11 @@ async def prepare_table(conn, drop_existing):
     );""")
     await conn.execute(f"CREATE INDEX IF NOT EXISTS idx_filename ON {TABLE_NAME}(filename);")
 
+import time
+
 async def async_writer(result_queue, db_config, drop_existing):
+    total_start = time.time()
+    """Asynchronous writer function to insert file data into the database."""
     file_counter = 0
     conn = await asyncpg.connect(**db_config)
     await prepare_table(conn, drop_existing)
@@ -88,18 +93,25 @@ async def async_writer(result_queue, db_config, drop_existing):
             elif msg_type == 'files':
                 buffer.extend(data)
                 if len(buffer) >= INSERT_BATCH_SIZE:
+                    start_time = time.time()
                     await conn.executemany(insert_query, buffer)
+                    duration = time.time() - start_time
                     file_counter += len(buffer)
                     if file_counter % 100000 < INSERT_BATCH_SIZE:
-                        print(f"[INFO] Indexed {file_counter:,} files...")
+                        print(f"[INFO] Indexed {file_counter:,} files in {duration:.2f} seconds...")
                     buffer.clear()
         except Empty:
             continue
 
     if buffer:
+        start_time = time.time()
         await conn.executemany(insert_query, buffer)
+        duration = time.time() - start_time
         file_counter += len(buffer)
-        print(f"[INFO] Final indexed file count: {file_counter:,}")
+        print(f"[INFO] Final indexed file count: {file_counter:,} in {duration:.2f} seconds")
+    total_time = time.time() - total_start
+    rate = file_counter / total_time if total_time > 0 else 0
+    print(f"[SUMMARY] Indexed {file_counter:,} files total in {total_time:.2f} seconds ({rate:.2f} files/sec)")
 
     await conn.close()
 
@@ -107,6 +119,7 @@ def writer_process(result_queue, db_config, drop_existing):
     asyncio.run(async_writer(result_queue, db_config, drop_existing))
 
 def traverse_parallel(root_dir, db_config, drop_existing=False, filename_regex=None, num_workers=mp.cpu_count()):
+    """Traverse directories in parallel and index files into PostgreSQL."""
     ctx = mp.get_context('spawn')
     task_queue = ctx.JoinableQueue()
     result_queue = ctx.Queue(maxsize=1000)
