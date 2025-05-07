@@ -5,6 +5,7 @@ import asyncio
 import asyncpg
 import multiprocessing as mp
 from queue import Empty
+import time
 
 INSERT_BATCH_SIZE = 1000
 TABLE_NAME = "file_index"
@@ -60,14 +61,11 @@ async def prepare_table(conn, drop_existing):
         await conn.execute(f"DROP TABLE IF EXISTS {TABLE_NAME}")
     await conn.execute(f"""
         CREATE TABLE IF NOT EXISTS {TABLE_NAME} (
-        filename TEXT NOT NULL,
+        filename TEXT PRIMARY KEY,
         root_path TEXT NOT NULL,
-        full_path TEXT NOT NULL,
-        PRIMARY KEY (filename, root_path)
+        full_path TEXT NOT NULL
     );""")
     await conn.execute(f"CREATE INDEX IF NOT EXISTS idx_filename ON {TABLE_NAME}(filename);")
-
-import time
 
 async def async_writer(result_queue, db_config, drop_existing):
     total_start = time.time()
@@ -79,7 +77,7 @@ async def async_writer(result_queue, db_config, drop_existing):
     insert_query = f"""
         INSERT INTO {TABLE_NAME} (filename, full_path, root_path)
         VALUES ($1, $2, $3)
-        ON CONFLICT (filename, root_path) DO NOTHING
+        ON CONFLICT (filename) DO NOTHING
     """
 
     buffer = []
