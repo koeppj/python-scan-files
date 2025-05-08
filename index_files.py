@@ -29,7 +29,8 @@ def scan_dir(dir_path, root_path, filename_regex):
                             extracted = match.group(0)
                         else:
                             continue  # skip files that do not match
-                    results.append((extracted, full_path, root_path))
+                    object_id = extracted if filename_regex else full_filename
+                    results.append((object_id, full_filename, full_path, root_path))
                 elif entry.is_dir(follow_symlinks=False):
                     subdirs.append(full_path)
     except (PermissionError, FileNotFoundError):
@@ -61,11 +62,12 @@ async def prepare_table(conn, drop_existing):
         await conn.execute(f"DROP TABLE IF EXISTS {TABLE_NAME}")
     await conn.execute(f"""
         CREATE TABLE IF NOT EXISTS {TABLE_NAME} (
-        filename TEXT PRIMARY KEY,
+        object_id TEXT PRIMARY KEY,
+        filename TEXT NOT NULL,
         root_path TEXT NOT NULL,
         full_path TEXT NOT NULL
     );""")
-    await conn.execute(f"CREATE INDEX IF NOT EXISTS idx_filename ON {TABLE_NAME}(filename);")
+    await conn.execute(f"CREATE INDEX IF NOT EXISTS idx_object_id ON {TABLE_NAME}(object_id);")
 
 async def async_writer(result_queue, db_config, drop_existing):
     total_start = time.time()
@@ -75,9 +77,9 @@ async def async_writer(result_queue, db_config, drop_existing):
     await prepare_table(conn, drop_existing)
 
     insert_query = f"""
-        INSERT INTO {TABLE_NAME} (filename, full_path, root_path)
-        VALUES ($1, $2, $3)
-        ON CONFLICT (filename) DO NOTHING
+        INSERT INTO {TABLE_NAME} (object_id, filename, full_path, root_path)
+        VALUES ($1, $2, $3, $4)
+        ON CONFLICT (object_id) DO NOTHING
     """
 
     buffer = []
@@ -185,7 +187,6 @@ def main():
         drop_existing=args.drop_existing,
         filename_regex=args.filename_regex
     )
-
 
 if __name__ == '__main__':
     main()
