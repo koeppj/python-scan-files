@@ -71,3 +71,5 @@ var/
 
 # config file
 config.json
+
+/inputs
